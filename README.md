@@ -1,12 +1,17 @@
 # HChat SDK for Python
 
-A robust Python 3.12+ SDK for HChat, mirroring the functionality of the Node.js SDK.
+A robust Python 3.12+ SDK for HChat, mirroring the functionality of the Node.js SDK with full parity for all major providers.
 
 ## Features
-- **Multi-Provider Support**: Seamlessly switch between OpenAI, Anthropic, Google (Gemini), and HChat native models.
-- **Unified Interface**: Consistent `complete()` and `stream()` methods across all providers.
-- **Strict Typing**: Full Pydantic V2 models for requests, responses, and stream events.
-- **Automatic Mapping**: Handles provider-specific API differences (e.g., Azure-style endpoints for OpenAI) automatically.
+
+- **Multi-Provider Support**: Seamlessly switch between OpenAI (Azure), Anthropic (Claude), and Google (Gemini).
+- **Unified Interface**: Use the same `complete()` and `stream()` methods regardless of the backend.
+- **Advanced Capabilities**:
+  - **Streaming**: Real-time response handling with support for text, tool calls, and thinking.
+  - **Thinking (Reasoning)**: Native support for reasoning-enabled models like Claude 3.7 and Gemini Thinking.
+  - **Tool Use (Function Calling)**: Simple interface for multi-tool integration.
+  - **Multimodal (Vision)**: Support for image analysis via Base64 or URL.
+- **Strict Typing**: Built with Pydantic V2 for robust validation and IDE support.
 
 ## Installation
 
@@ -18,11 +23,9 @@ uv add hchat-sdk-python
 
 ## Configuration
 
-Set your API key in the environment variables:
+Set your API key as an environment variable:
 
 ```bash
-export API_KEY="your_api_key_here"
-# or
 export HCHAT_API_KEY="your_api_key_here"
 ```
 
@@ -32,16 +35,12 @@ export HCHAT_API_KEY="your_api_key_here"
 
 ```python
 import asyncio
-import os
 from hchat_sdk import HChat
 
 async def main():
-    client = HChat(
-        model="gpt-4o", 
-        api_key=os.getenv("API_KEY")
-    )
+    client = HChat(model="gpt-4o")
     
-    response = await client.complete("Hello, world!")
+    response = await client.complete("Hello! How can you help me today?")
     print(response.choices[0].message.content)
 
 if __name__ == "__main__":
@@ -50,40 +49,56 @@ if __name__ == "__main__":
 
 ### Streaming with Thinking
 
+Perfect for models like `gpt-5-mini` or `claude-sonnet-4-5` that support reasoning.
+
 ```python
-import asyncio
-from hchat_sdk import HChat
-
-async def main():
-    client = HChat(model="gpt-5-mini", api_key="...")
-    
-    async for chunk in client.stream("Explain quantum physics", reasoning=True):
-        if chunk.type == "stream_delta":
-            if chunk.content.type == "thinking_delta":
-                print(f"[Thinking] {chunk.content.thinking}", end="")
-            elif chunk.content.type == "text_delta":
-                print(chunk.content.text, end="")
-
-if __name__ == "__main__":
-    asyncio.run(main())
+async for chunk in client.stream("Explain quantum entanglement", reasoning=True):
+    if chunk.type == "stream_delta":
+        content = chunk.content
+        if content.type == "thinking_delta":
+            print(f"[Thinking] {content.thinking}", end="")
+        elif content.type == "text_delta":
+            print(content.text, end="")
 ```
 
-## Review & Verification
+### Vision (Image Input)
 
-The SDK includes a comprehensive test suite to validate model support and functionality.
+```python
+from hchat_sdk.types.request import ContentBlock
 
-1. **Validation Tests**: Checks strict model support policies.
-   ```bash
-   uv run pytest tests/test_validation.py
-   ```
+image_block = ContentBlock(
+    type="image",
+    source={
+        "type": "base64",
+        "media_type": "image/jpeg",
+        "data": "..." # base64 string
+    }
+)
 
-2. **Verification Tests**: Functional smoke tests against the live API (requires API_KEY).
-   ```bash
-   uv run pytest tests/test_verification.py
-   ```
+response = await client.complete(messages=[
+    {"role": "user", "content": [
+        {"type": "text", "text": "What is in this image?"},
+        image_block
+    ]}
+])
+```
 
 ## Supported Models
 
-- **OpenAI**: `gpt-4o`, `gpt-4o-mini`, `gpt-5-mini`, etc.
-- **Anthropic**: `claude-sonnet-4-5`, `claude-3-5-sonnet-v2`, etc.
-- **Google**: `gemini-2.0-flash`, `gemini-2.5-pro`, etc.
+| Provider | Key Models | Features |
+| :--- | :--- | :--- |
+| **Azure (OpenAI)** | `gpt-4o`, `gpt-5-mini` | Vision, Tools, Reasoning |
+| **Anthropic** | `claude-sonnet-4-5`, `claude-3-5-sonnet-v2` | Vision, Tools, Thinking |
+| **Google** | `gemini-2.0-flash`, `gemini-2.5-pro` | Vision, Tools, Thinking |
+
+## Testing
+
+The SDK uses `pytest` for verification. Set `HCHAT_API_KEY` before running.
+
+```bash
+# Run all message tests
+uv run pytest tests/test_messages.py -v
+
+# Run model listing tests
+uv run pytest tests/test_models.py -v
+```
