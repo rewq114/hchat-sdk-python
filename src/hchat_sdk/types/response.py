@@ -46,6 +46,12 @@ class ThinkingDelta(BaseModel):
     thinking: str
     signature: Optional[str] = None
 
+class ThinkingStart(BaseModel):
+    type: Literal['thinking_start']
+
+class ThinkingEnd(BaseModel):
+    type: Literal['thinking_end']
+
 class ToolCallStart(BaseModel):
     type: Literal['tool_call_start']
     name: str
@@ -61,7 +67,7 @@ class ToolCallEnd(BaseModel):
 
 ContentEvent = Union[
     TextStart, TextDelta, TextEnd,
-    ThinkingDelta,
+    ThinkingStart, ThinkingDelta, ThinkingEnd,
     ToolCallStart, ToolCallDelta, ToolCallEnd
 ]
 

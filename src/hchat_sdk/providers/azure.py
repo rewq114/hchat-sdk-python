@@ -13,23 +13,24 @@ from ..types.response import (
 )
 
 
-class OpenAIProvider(BaseProvider):
+class AzureProvider(BaseProvider):
     """
-    Standard OpenAI Provider
-    - Target: https://api.openai.com/v1 (or compatible)
-    - Uses Authorization: Bearer {api_key}
-    - Uses chat/completions endpoint
+    Azure Provider (HChat wrapped OpenAI)
+    - Supports deployments/{model}/chat/completions endpoint
+    - Stateful stream parsing for tool calls and text
+    - Maps max_tokens to max_completion_tokens
     """
 
     async def complete(self, request: LLMRequest) -> LLMResponse:
         url = self._build_url(request)
         payload = self._convert_request(request, stream=False)
         headers = self._get_headers(request)
-        headers["Authorization"] = f"Bearer {request.api_key}"
+        headers["api-key"] = request.api_key
 
         async with httpx.AsyncClient() as client:
             response = await client.post(url, headers=headers, json=payload, timeout=60.0)
             if not response.is_success:
+                 # Replicate server error handling logic if needed, but for now raise
                  response.raise_for_status()
             
             data = response.json()
@@ -37,16 +38,22 @@ class OpenAIProvider(BaseProvider):
 
     async def stream(self, request: LLMRequest) -> AsyncGenerator[ResponseChunk, None]:
         url = self._build_url(request)
+        print(f"DEBUG AZURE URL: {url}")
         payload = self._convert_request(request, stream=True)
         headers = self._get_headers(request)
-        headers["Authorization"] = f"Bearer {request.api_key}"
+        headers["api-key"] = request.api_key
+        headers["Accept"] = "text/event-stream"
 
         async with httpx.AsyncClient() as client:
             async with client.stream("POST", url, headers=headers, json=payload, timeout=60.0) as response:
+                print(f"DEBUG RESPONSE STATUS: {response.status_code}")
+                if not response.is_success:
+                    err_body = await response.aread()
+                    print(f"\n[Azure Stream Error Body] {err_body.decode()}")
                 response.raise_for_status()
 
                 is_first_chunk = True
-                current_block_type = None
+                current_block_type = None  # 'text' or 'tool_call'
                 current_tool_index = -1
                 current_tool_args_buffer = ""
                 current_tool_id = ""
@@ -65,8 +72,9 @@ class OpenAIProvider(BaseProvider):
                         try:
                             raw_chunk = json.loads(data_str)
                             
-                            if is_first_chunk:
-                                choice = raw_chunk.get("choices", [{}])[0]
+                            choices = raw_chunk.get("choices", [])
+                            if is_first_chunk and choices:
+                                choice = choices[0]
                                 delta = choice.get("delta", {})
                                 if delta.get("role"):
                                     yield StreamStart(
@@ -78,17 +86,19 @@ class OpenAIProvider(BaseProvider):
                                     )
                                     is_first_chunk = False
 
-                            choice = raw_chunk.get("choices", [{}])[0]
-                            if not choice:
+                            if not choices:
                                 if "usage" in raw_chunk:
                                     u = raw_chunk["usage"]
+                                    details = u.get("completion_tokens_details", {})
                                     final_usage = Usage(
                                         prompt_tokens=u.get("prompt_tokens", 0),
                                         completion_tokens=u.get("completion_tokens", 0),
-                                        total_tokens=u.get("total_tokens", 0)
+                                        total_tokens=u.get("total_tokens", 0),
+                                        reasoning_tokens=details.get("reasoning_tokens", 0)
                                     )
                                 continue
 
+                            choice = choices[0]
                             delta = choice.get("delta", {})
                             
                             # 1. Text Content
@@ -140,6 +150,12 @@ class OpenAIProvider(BaseProvider):
                                             content=ToolCallDelta(type="tool_call_delta", args=args_delta)
                                         )
 
+                            # 3. Reasoning (Thinking)
+                            # Handle reasoning_content if present (O1 models)
+                            reasoning = delta.get("reasoning_content")
+                            if reasoning:
+                                yield StreamDelta(type="stream_delta", content=ThinkingDelta(type="thinking_delta", thinking=reasoning))
+
                             if choice.get("finish_reason"):
                                 final_finish_reason = choice["finish_reason"]
 
@@ -162,7 +178,9 @@ class OpenAIProvider(BaseProvider):
 
     def _build_url(self, request: LLMRequest) -> str:
         api_base = request.api_base.rstrip("/") + "/"
-        return f"{api_base}chat/completions"
+        if "openai" not in api_base.lower():
+            api_base += "openai/"
+        return f"{api_base}deployments/{request.model}/chat/completions"
 
     def _create_tool_end_event(self, args_buffer: str) -> StreamDelta:
         input_data = {}
@@ -180,12 +198,19 @@ class OpenAIProvider(BaseProvider):
         if request.system:
             messages.insert(0, {"role": "system", "content": request.system})
 
+        is_o1 = request.model.startswith("o1")
+        is_gpt5 = request.model.startswith("gpt-5")
+        
+        temperature = request.temperature
+        if is_o1 or is_gpt5:
+            temperature = 1.0  # Azure SDK logic parity
+            
         payload = {
             "model": request.model,
             "messages": messages,
             "stream": stream,
-            "max_tokens": request.max_tokens,
-            "temperature": request.temperature,
+            "max_completion_tokens": request.max_tokens,
+            "temperature": temperature,
             "top_p": request.top_p,
             "stop": request.stop,
         }
@@ -194,6 +219,7 @@ class OpenAIProvider(BaseProvider):
         if request.tools:
             mapped_tools = []
             for t in request.tools:
+                # Expecting standard OpenAI format or simplified
                 if t.get("type") in ["function", "custom"]:
                     if "function" in t:
                         mapped_tools.append({
@@ -206,19 +232,28 @@ class OpenAIProvider(BaseProvider):
                             "function": {
                                 "name": t.get("name"),
                                 "description": t.get("description"),
-                                "parameters": t.get("parameters")
+                                "parameters": t.get("parameters"),
+                                "strict": False
                             }
                         })
             if mapped_tools:
                 payload["tools"] = mapped_tools
 
-        return {k: v for k, v in payload.items() if v is not None}
+        # Reasoning effort
+        if request.reasoning:
+            payload["reasoning_effort"] = "high"
+        else:
+            payload["reasoning_effort"] = "minimal"
+
+        payload = {k: v for k, v in payload.items() if v is not None}
+        return payload
 
     def _convert_messages(self, messages: List[InputMessage]) -> List[Dict[str, Any]]:
         result = []
         for msg in messages:
             content = msg.content
             if isinstance(content, list):
+                # Multimodal content
                 parts = []
                 for part in content:
                     p_dict = part.model_dump() if hasattr(part, 'model_dump') else part
@@ -228,9 +263,9 @@ class OpenAIProvider(BaseProvider):
                         source = p_dict.get("source", {})
                         if source.get("type") == "base64":
                             url = f"data:{source.get('media_type', 'image/jpeg')};base64,{source['data']}"
-                            parts.append({"type": "image_url", "image_url": {"url": url}})
+                            parts.append({"type": "image_url", "image_url": {"url": url, "detail": "high"}})
                         elif source.get("type") == "url":
-                            parts.append({"type": "image_url", "image_url": {"url": source["url"]}})
+                            parts.append({"type": "image_url", "image_url": {"url": source["url"], "detail": "high"}})
                 result.append({"role": msg.role, "content": parts})
             else:
                 result.append({"role": msg.role, "content": content})
@@ -238,10 +273,12 @@ class OpenAIProvider(BaseProvider):
 
     def _map_complete_response(self, data: Dict[str, Any]) -> LLMResponse:
         usage_data = data.get("usage", {})
+        details = usage_data.get("completion_tokens_details", {})
         usage = Usage(
             prompt_tokens=usage_data.get("prompt_tokens", 0),
             completion_tokens=usage_data.get("completion_tokens", 0),
-            total_tokens=usage_data.get("total_tokens", 0)
+            total_tokens=usage_data.get("total_tokens", 0),
+            reasoning_tokens=details.get("reasoning_tokens", 0)
         )
 
         choices = []
@@ -249,6 +286,7 @@ class OpenAIProvider(BaseProvider):
             msg_data = c.get("message", {})
             content = msg_data.get("content") or ""
             
+            # If tool calls, merge into blocks
             tool_calls = msg_data.get("tool_calls")
             if tool_calls:
                 blocks = []

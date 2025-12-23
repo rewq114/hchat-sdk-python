@@ -4,54 +4,51 @@ from pydantic import BaseModel
 class ModelCapability(BaseModel):
     model: str
     provider: str
-    
-    # We can add more fields (reasoning, tools, etc) later if needed for validation
-    # For now, we just need model -> provider mapping
+    max_tokens: int
 
 # Simple registry based on the Node SDK
 MODEL_CAPABILITIES = [
-    # OpenAI
-    # ModelCapability(model='gpt-5', provider='openai'), # Commented out to match Node validation test
-    ModelCapability(model='gpt-5-mini', provider='openai'),
-    ModelCapability(model='gpt-4o', provider='openai'),
-    ModelCapability(model='gpt-4o-mini', provider='openai'),
-    ModelCapability(model='gpt-4.1', provider='openai'),
-    ModelCapability(model='gpt-4.1-mini', provider='openai'),
+    # OpenAI (Mapped to azure provider for HChat deployment logic)
+    # ModelCapability(model='gpt-5', provider='azure', max_tokens=16384),
+    ModelCapability(model='gpt-5-mini', provider='azure', max_tokens=16384),
+    ModelCapability(model='gpt-4o', provider='azure', max_tokens=4096),
+    ModelCapability(model='gpt-4o-mini', provider='azure', max_tokens=16384),
+    ModelCapability(model='gpt-4.1', provider='azure', max_tokens=16384),
+    ModelCapability(model='gpt-4.1-mini', provider='azure', max_tokens=16384),
     
     # Anthropic
-    ModelCapability(model='claude-sonnet-4', provider='anthropic'),
-    ModelCapability(model='claude-sonnet-4-5', provider='anthropic'),
-    ModelCapability(model='claude-haiku-4-5', provider='anthropic'),
-    ModelCapability(model='claude-3-7-sonnet', provider='anthropic'),
-    ModelCapability(model='claude-3-5-sonnet-v2', provider='anthropic'),
+    ModelCapability(model='claude-sonnet-4', provider='anthropic', max_tokens=8192),
+    ModelCapability(model='claude-sonnet-4-5', provider='anthropic', max_tokens=8192),
+    ModelCapability(model='claude-haiku-4-5', provider='anthropic', max_tokens=4096),
+    ModelCapability(model='claude-3-7-sonnet', provider='anthropic', max_tokens=8192),
+    ModelCapability(model='claude-3-5-sonnet-v2', provider='anthropic', max_tokens=8192),
     
     # Google
-    ModelCapability(model='gemini-2.5-pro', provider='google'),
-    ModelCapability(model='gemini-2.5-flash', provider='google'),
-    ModelCapability(model='gemini-2.5-flash-image', provider='google'),
-    ModelCapability(model='gemini-2.0-flash', provider='google'),
+    ModelCapability(model='gemini-2.5-pro', provider='google', max_tokens=8192),
+    ModelCapability(model='gemini-2.5-flash', provider='google', max_tokens=8192),
+    ModelCapability(model='gemini-2.5-flash-image', provider='google', max_tokens=4096),
+    ModelCapability(model='gemini-2.0-flash', provider='google', max_tokens=8192),
 
-    # HChat (Provider: hchat) - mirrors OpenAI for now usually, but strict mapping
-    ModelCapability(model='gpt-5-mini', provider='hchat'),
-    ModelCapability(model='gpt-4.1', provider='hchat'),
-    ModelCapability(model='gpt-4.1-mini', provider='hchat'),
-    ModelCapability(model='gpt-4o', provider='hchat'),
-    ModelCapability(model='gpt-4o-mini', provider='hchat'),
-    ModelCapability(model='claude-sonnet-4-5', provider='hchat'),
-    ModelCapability(model='claude-haiku-4-5', provider='hchat'),
-    ModelCapability(model='claude-sonnet-4', provider='hchat'),
-    ModelCapability(model='claude-3-7-sonnet', provider='hchat'),
-    ModelCapability(model='claude-3-5-sonnet-v2', provider='hchat'),
-    ModelCapability(model='gemini-2.5-pro', provider='hchat'),
-    ModelCapability(model='gemini-2.5-flash', provider='hchat'),
-    ModelCapability(model='gemini-2.5-flash-image', provider='hchat'),
-    ModelCapability(model='gemini-2.0-flash', provider='hchat'),
+    # HChat (Provider: hchat)
+    ModelCapability(model='gpt-5-mini', provider='hchat', max_tokens=16384),
+    ModelCapability(model='gpt-4.1', provider='hchat', max_tokens=16384),
+    ModelCapability(model='gpt-4.1-mini', provider='hchat', max_tokens=16384),
+    ModelCapability(model='gpt-4o', provider='hchat', max_tokens=4096),
+    ModelCapability(model='gpt-4o-mini', provider='hchat', max_tokens=16384),
+    ModelCapability(model='claude-sonnet-4-5', provider='hchat', max_tokens=8192),
+    ModelCapability(model='claude-haiku-4-5', provider='hchat', max_tokens=4096),
+    ModelCapability(model='claude-sonnet-4', provider='hchat', max_tokens=8192),
+    ModelCapability(model='claude-3-7-sonnet', provider='hchat', max_tokens=8192),
+    ModelCapability(model='claude-3-5-sonnet-v2', provider='hchat', max_tokens=8192),
+    ModelCapability(model='gemini-2.5-pro', provider='hchat', max_tokens=8192),
+    ModelCapability(model='gemini-2.5-flash', provider='hchat', max_tokens=8192),
+    ModelCapability(model='gemini-2.5-flash-image', provider='hchat', max_tokens=4096),
+    ModelCapability(model='gemini-2.0-flash', provider='hchat', max_tokens=8192),
 ]
 
 
 def get_provider_for_model(model: str) -> str:
     """Find the provider for a given model name."""
-    # First exact match
     for cap in MODEL_CAPABILITIES:
         if cap.model == model:
             return cap.provider
